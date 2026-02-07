@@ -4,15 +4,15 @@ from setuptools import find_packages, setup
 
 setup(
     name="kailash-nexus",
-    version="1.1.3",
+    version="1.1.4",
     description="Multi-channel platform built on Kailash SDK",
     author="Integrum",
-    author_email="info@integrum.com",
-    license="Apache-2.0 WITH Additional-Terms",
+    author_email="info@integrum.global",
+    license="Apache-2.0",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     install_requires=[
-        "kailash>=0.9.31",
+        "kailash>=0.10.17",
     ],
     python_requires=">=3.11",
     classifiers=[

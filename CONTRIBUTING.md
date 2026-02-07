@@ -135,4 +135,4 @@ For questions about the codebase or architecture:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's Apache 2.0 license with additional terms.
+By contributing, you agree that your contributions will be licensed under the Apache License, Version 2.0.
