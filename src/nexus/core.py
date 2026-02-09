@@ -134,6 +134,7 @@ class Nexus:
 
         # Internal state
         self._workflows: Dict[str, Workflow] = {}
+        self._handler_registry: Dict[str, Dict[str, Any]] = {}
         self._gateway = None
         self._running = False
 
@@ -584,6 +585,9 @@ Check the documentation or explore available resources.
         # Store internally for Nexus-specific features
         self._workflows[name] = workflow
 
+        # Validate PythonCodeNode sandbox issues at registration time
+        self._validate_workflow_sandbox(name, workflow)
+
         # Register with enterprise gateway - this automatically exposes on all channels
         if self._gateway:
             try:
@@ -782,6 +786,188 @@ Check the documentation or explore available resources.
             return wrapped_func
 
         return decorator
+
+    def handler(
+        self,
+        name: str,
+        description: str = "",
+        tags: Optional[List[str]] = None,
+    ):
+        """Decorator to register an async function as a multi-channel workflow.
+
+        This provides first-class handler support, bypassing the PythonCodeNode
+        sandbox. The decorated function's signature is inspected to derive
+        workflow parameters automatically.
+
+        The handler is exposed on all channels (API, CLI, MCP) just like
+        workflows registered via register().
+
+        Args:
+            name: Workflow name for registration.
+            description: Optional description for the workflow.
+            tags: Optional tags for categorization.
+
+        Returns:
+            Decorator function.
+
+        Example:
+            >>> @app.handler("greet", description="Greet a user")
+            ... async def greet(name: str, greeting: str = "Hello") -> dict:
+            ...     return {"message": f"{greeting}, {name}!"}
+            ...
+            ... # Now available at POST /workflows/greet/execute
+            ... # And as MCP tool: workflow_greet
+        """
+
+        def decorator(func):
+            self.register_handler(name, func, description=description, tags=tags)
+            return func
+
+        return decorator
+
+    def register_handler(
+        self,
+        name: str,
+        handler_func,
+        description: str = "",
+        tags: Optional[List[str]] = None,
+        input_mapping: Optional[Dict[str, str]] = None,
+    ):
+        """Register an async/sync function as a multi-channel workflow.
+
+        Non-decorator equivalent of @app.handler(). Builds a HandlerNode
+        workflow from the function and delegates to self.register() for
+        multi-channel exposure.
+
+        Args:
+            name: Workflow name for registration.
+            handler_func: The async or sync function to register.
+            description: Optional description.
+            tags: Optional tags for categorization.
+            input_mapping: Optional mapping of workflow input names to handler
+                parameter names. If None, identity mapping is used.
+
+        Raises:
+            TypeError: If handler_func is not callable.
+            ValueError: If name is empty or already registered as a handler.
+        """
+        if not callable(handler_func):
+            raise TypeError(
+                f"handler_func must be callable, got {type(handler_func).__name__}"
+            )
+
+        if not name or not name.strip():
+            raise ValueError("Handler name cannot be empty")
+
+        from kailash.nodes.handler import make_handler_workflow
+
+        workflow = make_handler_workflow(
+            handler_func, node_id="handler", input_mapping=input_mapping
+        )
+
+        # Store in handler registry for introspection
+        self._handler_registry[name] = {
+            "handler": handler_func,
+            "description": description or getattr(handler_func, "__doc__", "") or "",
+            "tags": tags or [],
+            "workflow": workflow,
+        }
+
+        # Delegate to register() for multi-channel exposure
+        self.register(name, workflow)
+
+        logger.info(f"Handler '{name}' registered (function: {handler_func.__name__})")
+
+    def _validate_workflow_sandbox(self, name: str, workflow: Workflow):
+        """Check for PythonCodeNode/AsyncPythonCodeNode with blocked imports.
+
+        Emits logger.warning() (not exceptions) when sandbox-restricted
+        imports are detected, with an actionable message suggesting
+        @app.handler() as an alternative.
+
+        This runs at registration time to give early feedback.
+
+        Args:
+            name: Workflow name for logging.
+            workflow: The workflow to validate.
+        """
+        import ast
+
+        try:
+            from kailash.nodes.code.common import ALLOWED_ASYNC_MODULES, ALLOWED_MODULES
+        except ImportError:
+            return
+
+        # Build map of node_id -> actual instance (if available)
+        node_instances = {}
+        if hasattr(workflow, "_node_instances"):
+            node_instances = workflow._node_instances
+
+        # Also check workflow.nodes for type info
+        if not hasattr(workflow, "nodes") and not node_instances:
+            return
+
+        # Iterate over known nodes
+        nodes_to_check = {}
+        if hasattr(workflow, "nodes"):
+            for node_id, node_info in workflow.nodes.items():
+                node_type_name = (
+                    getattr(node_info, "node_type", None) or type(node_info).__name__
+                )
+                if node_type_name in ("PythonCodeNode", "AsyncPythonCodeNode"):
+                    # Get the actual instance if available
+                    instance = node_instances.get(node_id)
+                    nodes_to_check[node_id] = (node_type_name, instance)
+
+        # Also check _node_instances directly for instances not in workflow.nodes
+        for node_id, instance in node_instances.items():
+            if node_id not in nodes_to_check:
+                node_type_name = type(instance).__name__
+                if node_type_name in ("PythonCodeNode", "AsyncPythonCodeNode"):
+                    nodes_to_check[node_id] = (node_type_name, instance)
+
+        for node_id, (node_type_name, instance) in nodes_to_check.items():
+            code = getattr(instance, "code", None) if instance else None
+            if not code:
+                continue
+
+            # Determine which allowed list to use
+            if node_type_name == "AsyncPythonCodeNode":
+                allowed = ALLOWED_ASYNC_MODULES
+            else:
+                allowed = ALLOWED_MODULES
+
+            # Parse and check imports
+            try:
+                tree = ast.parse(code)
+            except SyntaxError as e:
+                logger.warning(
+                    f"Workflow '{name}': {node_type_name} node '{node_id}' has "
+                    f"syntax error in code: {e}. "
+                    f"Consider using @app.handler() for complex logic."
+                )
+                continue
+
+            for ast_node in ast.walk(tree):
+                blocked_modules = []
+                if isinstance(ast_node, ast.Import):
+                    for alias in ast_node.names:
+                        root = alias.name.split(".")[0]
+                        if root not in allowed:
+                            blocked_modules.append(alias.name)
+                elif isinstance(ast_node, ast.ImportFrom):
+                    if ast_node.module:
+                        root = ast_node.module.split(".")[0]
+                        if root not in allowed:
+                            blocked_modules.append(ast_node.module)
+
+                for module in blocked_modules:
+                    logger.warning(
+                        f"Workflow '{name}': {node_type_name} node '{node_id}' "
+                        f"imports '{module}' which is not in the sandbox "
+                        f"allowlist. This will fail at execution time. "
+                        f"Consider using @app.handler() to bypass the sandbox."
+                    )
 
     async def _execute_workflow(
         self, workflow_name: str, inputs: Dict[str, Any]
