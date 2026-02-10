@@ -8,7 +8,18 @@ import json
 import logging
 import os
 import threading
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    runtime_checkable,
+)
 
 from kailash.servers.gateway import create_gateway
 from kailash.workflow import Workflow
@@ -32,6 +43,61 @@ class NexusConfig:
         self.docs_enabled = True
 
 
+@dataclass
+class MiddlewareInfo:
+    """Information about registered middleware."""
+
+    middleware_class: type
+    kwargs: Dict[str, Any]
+    added_at: datetime
+
+    @property
+    def name(self) -> str:
+        """Return the middleware class name."""
+        return self.middleware_class.__name__
+
+
+@dataclass
+class RouterInfo:
+    """Information about included routers."""
+
+    router: Any  # APIRouter - forward ref to avoid import at module level
+    prefix: str
+    tags: List[str]
+    added_at: datetime
+
+    @property
+    def routes(self) -> List[str]:
+        """Get all route paths in this router."""
+        return [route.path for route in self.router.routes]
+
+
+@runtime_checkable
+class NexusPluginProtocol(Protocol):
+    """Protocol for Nexus plugins.
+
+    Plugins provide a composable way to add functionality to Nexus.
+    They can register middleware, routers, and respond to lifecycle events.
+
+    Required:
+        name: Unique plugin name (property).
+        install(app): Called during add_plugin() to configure the plugin.
+
+    Optional:
+        on_startup(): Called when Nexus starts.
+        on_shutdown(): Called when Nexus stops.
+    """
+
+    @property
+    def name(self) -> str:
+        """Unique plugin name."""
+        ...
+
+    def install(self, app: "Nexus") -> None:
+        """Install the plugin into a Nexus application."""
+        ...
+
+
 class Nexus:
     """Zero-configuration workflow orchestration platform.
 
@@ -52,6 +118,15 @@ class Nexus:
         enable_discovery: bool = False,
         rate_limit_config: Optional[Dict[str, Any]] = None,
         enable_durability: bool = True,  # Disable for testing to prevent caching issues
+        # Preset System
+        preset: Optional[str] = None,
+        # CORS Configuration
+        cors_origins: Optional[List[str]] = None,
+        cors_allow_methods: Optional[List[str]] = None,
+        cors_allow_headers: Optional[List[str]] = None,
+        cors_allow_credentials: bool = False,
+        cors_expose_headers: Optional[List[str]] = None,
+        cors_max_age: int = 600,
     ):
         """Initialize Nexus with optional enterprise features.
 
@@ -67,6 +142,14 @@ class Nexus:
             enable_discovery: Enable MCP service discovery (default: False)
             rate_limit_config: Advanced rate limiting configuration (default: None)
             enable_durability: Enable durability/caching (default: True, set False for tests)
+            cors_origins: Allowed origins for CORS. Defaults to ["*"] in development,
+                must be explicitly set in production.
+            cors_allow_methods: Allowed HTTP methods. Defaults to ["*"].
+            cors_allow_headers: Allowed request headers. Defaults to ["*"].
+            cors_allow_credentials: Allow cookies/auth headers. Defaults to False.
+                Set to True only with explicit origins (not wildcard).
+            cors_expose_headers: Headers exposed to browser. Defaults to None.
+            cors_max_age: Preflight cache duration in seconds. Defaults to 600.
 
         Security Notes:
             - rate_limit defaults to 100 req/min to prevent DoS attacks
@@ -138,6 +221,36 @@ class Nexus:
         self._gateway = None
         self._running = False
 
+        # Middleware management
+        self._middleware_queue: List[Tuple[type, Dict[str, Any]]] = []
+        self._middleware_stack: List[MiddlewareInfo] = []
+
+        # Router management
+        self._router_queue: List[Tuple[Any, Dict[str, Any]]] = []
+        self._routers: List[RouterInfo] = []
+
+        # Plugin management
+        self._plugins: Dict[str, Any] = {}
+        self._startup_hooks: List[Callable[[], None]] = []
+        self._shutdown_hooks: List[Callable[[], None]] = []
+
+        # CORS configuration
+        self._cors_origins = cors_origins
+        self._cors_allow_methods = cors_allow_methods
+        self._cors_allow_headers = cors_allow_headers
+        self._cors_allow_credentials = cors_allow_credentials
+        self._cors_expose_headers = cors_expose_headers
+        self._cors_max_age = cors_max_age
+        self._cors_middleware_applied = False
+
+        # Validate CORS origins (production rejects wildcard)
+        if cors_origins is not None:
+            self._validate_cors_origins(cors_origins)
+
+        # Preset system
+        self._active_preset = preset
+        self._nexus_config = None  # Built lazily when preset is applied
+
         # Configuration objects for fine-tuning
         self.auth = NexusConfig()
         self.monitoring = NexusConfig()
@@ -154,6 +267,20 @@ class Nexus:
         # Create gateway with configuration
         self._initialize_gateway()
 
+        # Apply preset if specified (after gateway, so middleware/plugins can be applied)
+        if preset:
+            from nexus.presets import NexusConfig as _PresetConfig
+            from nexus.presets import apply_preset
+
+            self._nexus_config = _PresetConfig(
+                cors_origins=self._cors_origins or ["*"],
+                cors_allow_methods=self._cors_allow_methods or ["*"],
+                cors_allow_headers=self._cors_allow_headers or ["*"],
+                cors_allow_credentials=self._cors_allow_credentials,
+                environment=os.getenv("NEXUS_ENV", "development"),
+            )
+            apply_preset(self, preset, self._nexus_config)
+
         # Initialize revolutionary capabilities
         self._initialize_revolutionary_capabilities()
 
@@ -164,8 +291,13 @@ class Nexus:
 
     def _initialize_gateway(self):
         """Initialize the underlying SDK enterprise gateway."""
+        # Build CORS configuration from constructor params + environment defaults
+        cors_config = self._build_cors_config()
+
         try:
-            # Use SDK's enterprise server with all capabilities
+            # CRITICAL: Pass cors_origins=None to gateway to prevent double CORS
+            # middleware. Nexus handles CORS natively via add_middleware() below
+            # with full configuration (methods, headers, credentials, etc.).
             self._gateway = create_gateway(
                 title="Kailash Nexus - Zero-Config Workflow Platform",
                 server_type="enterprise",
@@ -173,18 +305,41 @@ class Nexus:
                 enable_resource_management=True,
                 enable_async_execution=True,
                 enable_health_checks=True,
-                cors_origins=["*"],  # Allow CORS for browser access
+                cors_origins=None,  # Nexus handles CORS natively
                 max_workers=20,  # Enterprise default
             )
             logger.info("Enterprise gateway initialized successfully")
 
-            # Enterprise gateway already provides all capabilities we need:
-            # - Multi-channel support (API, CLI, MCP)
-            # - Authentication and authorization
-            # - Health monitoring and metrics
-            # - Resource management
-            # - Durability and async execution
-            # - Built-in enterprise endpoints
+            # Apply full CORS middleware with all options
+            if cors_config["allow_origins"]:  # Only add if origins configured
+                from starlette.middleware.cors import CORSMiddleware
+
+                self._gateway.app.add_middleware(
+                    CORSMiddleware,
+                    allow_origins=cors_config["allow_origins"],
+                    allow_methods=cors_config["allow_methods"],
+                    allow_headers=cors_config["allow_headers"],
+                    allow_credentials=cors_config["allow_credentials"],
+                    expose_headers=cors_config["expose_headers"],
+                    max_age=cors_config["max_age"],
+                )
+                self._cors_middleware_applied = True
+
+            # Apply any middleware that was queued before gateway was ready.
+            # Starlette's add_middleware() uses LIFO internally (last added =
+            # outermost), so we do NOT reverse - middleware is applied in the
+            # order the user added them.
+            for middleware_class, kwargs in self._middleware_queue:
+                self._gateway.app.add_middleware(middleware_class, **kwargs)
+                logger.info(f"Applied queued middleware: {middleware_class.__name__}")
+            self._middleware_queue.clear()
+
+            # Apply any routers that were queued before gateway was ready.
+            for router, router_kwargs in self._router_queue:
+                self._gateway.app.include_router(router, **router_kwargs)
+                prefix = router_kwargs.get("prefix", "/")
+                logger.info(f"Applied queued router: {prefix}")
+            self._router_queue.clear()
 
         except Exception as e:
             logger.error(f"Failed to initialize enterprise gateway: {e}")
@@ -514,10 +669,17 @@ Check the documentation or explore available resources.
         async def workflow_tool(**params):
             """Execute workflow with given parameters."""
             runtime = AsyncLocalRuntime()
-            result_dict = await runtime.execute_workflow_async(workflow, inputs=params)
+            execution_result = await runtime.execute_workflow_async(
+                workflow, inputs=params
+            )
+            if isinstance(execution_result, tuple):
+                results, run_id = execution_result
+            else:
+                results = execution_result.get("results", execution_result)
+                run_id = execution_result.get("run_id", None)
             return {
-                "results": result_dict.get("results", result_dict),
-                "run_id": result_dict.get("run_id", None),
+                "results": results,
+                "run_id": run_id,
             }
 
         # Register as tool with the MCPServer
@@ -787,6 +949,585 @@ Check the documentation or explore available resources.
 
         return decorator
 
+    # =========================================================================
+    # Public Middleware API (WS01 - TODO-300A)
+    # =========================================================================
+
+    def add_middleware(
+        self,
+        middleware_class: type,
+        **kwargs: Any,
+    ) -> "Nexus":
+        """Add middleware to the Nexus application.
+
+        Middleware executes in LIFO order (last added = outermost = runs first
+        on request). This follows Starlette's onion model where middleware wraps
+        inner middleware. Can be called before or after start() - if the gateway
+        is not ready, middleware is queued and applied during initialization.
+
+        Args:
+            middleware_class: A valid ASGI/Starlette middleware class.
+                Must be a class (not instance) that accepts ``app`` as first
+                argument.
+            **kwargs: Arguments passed to the middleware constructor.
+
+        Returns:
+            self (for method chaining)
+
+        Raises:
+            TypeError: If middleware_class is not a valid middleware type.
+
+        Example:
+            >>> from starlette.middleware.cors import CORSMiddleware
+            >>> app = Nexus()
+            >>> app.add_middleware(
+            ...     CORSMiddleware,
+            ...     allow_origins=["http://localhost:3000"],
+            ...     allow_methods=["*"],
+            ...     allow_headers=["*"],
+            ... )
+        """
+        # Validate
+        if not isinstance(middleware_class, type):
+            raise TypeError(
+                f"middleware_class must be a class, got {type(middleware_class).__name__}. "
+                f"Pass the class itself (e.g., CORSMiddleware), not an instance."
+            )
+
+        # Warn on duplicate middleware class (non-blocking per spec)
+        for existing in self._middleware_stack:
+            if existing.middleware_class is middleware_class:
+                logger.warning(
+                    f"Duplicate middleware: {middleware_class.__name__} has already been added. "
+                    f"Adding it again may cause unexpected behavior."
+                )
+                break
+
+        # Store for introspection
+        info = MiddlewareInfo(
+            middleware_class=middleware_class,
+            kwargs=kwargs,
+            added_at=datetime.now(UTC),
+        )
+        self._middleware_stack.append(info)
+
+        # Apply or queue
+        if self._gateway is not None:
+            self._gateway.app.add_middleware(middleware_class, **kwargs)
+            logger.info(f"Added middleware: {middleware_class.__name__}")
+        else:
+            self._middleware_queue.append((middleware_class, kwargs))
+            logger.debug(
+                f"Queued middleware: {middleware_class.__name__} (gateway not ready)"
+            )
+
+        return self  # Enable chaining
+
+    @property
+    def middleware(self) -> List[MiddlewareInfo]:
+        """List of registered middleware in application order."""
+        return self._middleware_stack.copy()
+
+    # =========================================================================
+    # Public Router API (WS01 - TODO-300B)
+    # =========================================================================
+
+    def include_router(
+        self,
+        router: Any,
+        prefix: str = "",
+        tags: Optional[List[str]] = None,
+        dependencies: Optional[List[Any]] = None,
+        **kwargs: Any,
+    ) -> "Nexus":
+        """Include a FastAPI router in the Nexus application.
+
+        Routers provide a way to organize endpoints into logical groups.
+        Can be called before or after start() - if the gateway is not ready,
+        the router is queued and included during initialization.
+
+        Args:
+            router: A FastAPI APIRouter instance.
+            prefix: URL prefix for all routes in this router
+                (e.g., ``"/api/users"``).
+            tags: OpenAPI tags for all routes (for documentation grouping).
+            dependencies: Dependencies to apply to all routes in this router.
+            **kwargs: Additional arguments passed to FastAPI's
+                ``include_router()``.
+
+        Returns:
+            self (for method chaining)
+
+        Raises:
+            TypeError: If router is not an APIRouter instance.
+
+        Example:
+            >>> from fastapi import APIRouter
+            >>>
+            >>> user_router = APIRouter()
+            >>> @user_router.get("/{user_id}")
+            >>> async def get_user(user_id: str):
+            ...     return {"user_id": user_id}
+            >>>
+            >>> app = Nexus()
+            >>> app.include_router(
+            ...     user_router, prefix="/api/users", tags=["Users"]
+            ... )
+        """
+        from fastapi import APIRouter as _APIRouter
+
+        # Validate
+        if not isinstance(router, _APIRouter):
+            raise TypeError(
+                f"router must be a FastAPI APIRouter, got {type(router).__name__}"
+            )
+
+        # Warn on potential route conflicts (non-blocking)
+        if prefix and self._has_route_conflict(prefix):
+            logger.warning(
+                f"Router prefix '{prefix}' may conflict with existing routes"
+            )
+
+        # Build kwargs dict for FastAPI
+        router_kwargs: Dict[str, Any] = {
+            "prefix": prefix,
+            "tags": tags or [],
+            "dependencies": dependencies or [],
+            **kwargs,
+        }
+
+        # Store for introspection
+        info = RouterInfo(
+            router=router,
+            prefix=prefix,
+            tags=tags or [],
+            added_at=datetime.now(UTC),
+        )
+        self._routers.append(info)
+
+        # Apply or queue
+        if self._gateway is not None:
+            self._gateway.app.include_router(router, **router_kwargs)
+            logger.info(f"Included router with prefix: {prefix or '/'}")
+        else:
+            self._router_queue.append((router, router_kwargs))
+            logger.debug(f"Queued router: {prefix or '/'} (gateway not ready)")
+
+        return self  # Enable chaining
+
+    def _has_route_conflict(self, prefix: str) -> bool:
+        """Check if router prefix may conflict with existing routes.
+
+        Args:
+            prefix: Router prefix to check.
+
+        Returns:
+            True if potential conflict detected, False otherwise.
+        """
+        for router_info in self._routers:
+            if router_info.prefix == prefix:
+                return True
+
+        if self._gateway is not None:
+            for route in self._gateway.app.routes:
+                if hasattr(route, "path") and route.path.startswith(prefix):
+                    return True
+
+        return False
+
+    @property
+    def routers(self) -> List[RouterInfo]:
+        """List of included routers."""
+        return self._routers.copy()
+
+    # =========================================================================
+    # Public Plugin API (WS01 - TODO-300C)
+    # =========================================================================
+
+    def add_plugin(
+        self,
+        plugin: Any,
+    ) -> "Nexus":
+        """Install a plugin into the Nexus application.
+
+        Plugins are a composable way to add cross-cutting functionality.
+        The plugin's ``install()`` method is called immediately, and lifecycle
+        hooks (``on_startup``, ``on_shutdown``) are registered for later
+        invocation.
+
+        Args:
+            plugin: An object implementing the NexusPluginProtocol.
+                Must have a ``name`` property and an ``install(app)`` method.
+
+        Returns:
+            self (for method chaining)
+
+        Raises:
+            TypeError: If plugin does not implement required methods.
+            ValueError: If a plugin with the same name is already installed.
+
+        Example:
+            >>> class MyPlugin:
+            ...     @property
+            ...     def name(self): return "my-plugin"
+            ...     def install(self, app): pass
+            ...     def on_startup(self): print("started")
+            ...     def on_shutdown(self): print("stopped")
+            >>>
+            >>> app = Nexus()
+            >>> app.add_plugin(MyPlugin())
+        """
+        # Validate plugin protocol
+        if not hasattr(plugin, "name") or not hasattr(plugin, "install"):
+            raise TypeError(
+                f"Plugin must implement NexusPluginProtocol "
+                f"(requires 'name' and 'install'). "
+                f"Got: {type(plugin).__name__}"
+            )
+
+        # Check for duplicate
+        plugin_name = plugin.name
+        if plugin_name in self._plugins:
+            raise ValueError(f"Plugin '{plugin_name}' is already installed")
+
+        # Store plugin
+        self._plugins[plugin_name] = plugin
+
+        # Call install immediately
+        logger.info(f"Installing plugin: {plugin_name}")
+        plugin.install(self)
+
+        # Register lifecycle hooks if present
+        if hasattr(plugin, "on_startup") and callable(plugin.on_startup):
+            self._startup_hooks.append(plugin.on_startup)
+
+        if hasattr(plugin, "on_shutdown") and callable(plugin.on_shutdown):
+            self._shutdown_hooks.append(plugin.on_shutdown)
+
+        logger.info(f"Plugin installed: {plugin_name}")
+        return self
+
+    def _run_async_hook(self, hook) -> None:
+        """Run an async hook, handling both running and non-running event loops."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            # Inside a running event loop (e.g., FastAPI/uvicorn) -
+            # schedule as a task so it runs in the current loop
+            task = loop.create_task(hook())
+
+            def _hook_done_callback(t):
+                exc = t.exception()
+                if exc:
+                    logger.error("Async lifecycle hook %s failed: %s", hook, exc)
+
+            task.add_done_callback(_hook_done_callback)
+        else:
+            # No running event loop - safe to use asyncio.run()
+            asyncio.run(hook())
+
+    def _call_startup_hooks(self) -> None:
+        """Call all registered startup hooks.
+
+        Errors are logged but do not prevent other hooks from running.
+        """
+        import asyncio
+
+        for hook in self._startup_hooks:
+            try:
+                if asyncio.iscoroutinefunction(hook):
+                    self._run_async_hook(hook)
+                else:
+                    hook()
+            except Exception as e:
+                logger.error(f"Startup hook failed: {e}")
+
+    def _call_shutdown_hooks(self) -> None:
+        """Call all registered shutdown hooks in reverse order.
+
+        Errors are logged but do not prevent other hooks from running.
+        Hooks run in reverse registration order (last installed runs first).
+        """
+        import asyncio
+
+        for hook in reversed(self._shutdown_hooks):
+            try:
+                if asyncio.iscoroutinefunction(hook):
+                    self._run_async_hook(hook)
+                else:
+                    hook()
+            except Exception as e:
+                logger.error(f"Shutdown hook failed: {e}")
+
+    @property
+    def plugins(self) -> Dict[str, Any]:
+        """Dictionary of installed plugins by name."""
+        return self._plugins.copy()
+
+    # =========================================================================
+    # CORS Configuration API (WS01 - TODO-300E)
+    # =========================================================================
+
+    def _get_cors_defaults(self) -> Dict[str, Any]:
+        """Get environment-aware CORS defaults.
+
+        Returns:
+            CORS configuration dict with sensible defaults based on NEXUS_ENV.
+        """
+        nexus_env = os.getenv("NEXUS_ENV", "development").lower()
+
+        if nexus_env == "production":
+            # Production: No origins allowed by default - must be explicit
+            return {
+                "allow_origins": [],
+                "allow_methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+                "allow_headers": ["Authorization", "Content-Type", "X-Request-ID"],
+                "allow_credentials": True,
+                "expose_headers": ["X-Request-ID"],
+                "max_age": 600,
+            }
+        else:
+            # Development/staging: Permissive defaults
+            return {
+                "allow_origins": ["*"],
+                "allow_methods": ["*"],
+                "allow_headers": ["*"],
+                "allow_credentials": True,
+                "expose_headers": [],
+                "max_age": 600,
+            }
+
+    def _build_cors_config(self) -> Dict[str, Any]:
+        """Build CORS configuration from constructor parameters and defaults."""
+        defaults = self._get_cors_defaults()
+
+        return {
+            "allow_origins": (
+                self._cors_origins
+                if self._cors_origins is not None
+                else defaults["allow_origins"]
+            ),
+            "allow_methods": (
+                self._cors_allow_methods
+                if self._cors_allow_methods is not None
+                else defaults["allow_methods"]
+            ),
+            "allow_headers": (
+                self._cors_allow_headers
+                if self._cors_allow_headers is not None
+                else defaults["allow_headers"]
+            ),
+            "allow_credentials": self._cors_allow_credentials,
+            "expose_headers": (
+                self._cors_expose_headers
+                if self._cors_expose_headers is not None
+                else defaults["expose_headers"]
+            ),
+            "max_age": self._cors_max_age,
+        }
+
+    def _validate_cors_origins(self, origins: List[str]) -> None:
+        """Validate CORS origins configuration.
+
+        Args:
+            origins: List of origin strings to validate.
+
+        Raises:
+            ValueError: If configuration is insecure for production.
+        """
+        nexus_env = os.getenv("NEXUS_ENV", "development").lower()
+
+        if nexus_env == "production" and "*" in origins:
+            raise ValueError(
+                "CORS allow_origins=['*'] is not allowed in production. "
+                "Specify explicit origins: cors_origins=['https://app.example.com']"
+            )
+
+        # Validate origin format
+        for origin in origins:
+            if origin != "*" and not origin.startswith(("http://", "https://")):
+                logger.warning(
+                    f"CORS origin '{origin}' may be invalid. "
+                    f"Origins should be full URLs like 'https://example.com'"
+                )
+
+    def _validate_cors_security(self, cors_config: Dict[str, Any]) -> None:
+        """Warn about insecure CORS configurations.
+
+        Specifically warns when allow_credentials=True with allow_origins=["*"],
+        which browsers reject (credentials require explicit origins).
+        """
+        origins = cors_config.get("allow_origins", [])
+        credentials = cors_config.get("allow_credentials", False)
+
+        if credentials and "*" in origins:
+            logger.warning(
+                "CORS security warning: allow_credentials=True with allow_origins=['*'] "
+                "is rejected by browsers. Credentials require explicit origin URLs. "
+                "Either set specific origins or disable credentials."
+            )
+
+    def _apply_cors_middleware(self) -> None:
+        """Apply or update CORS middleware on the gateway."""
+        from starlette.middleware.cors import CORSMiddleware
+
+        cors_config = self._build_cors_config()
+
+        # Validate security implications
+        self._validate_cors_security(cors_config)
+
+        # Warn if reconfiguring after initial application
+        if self._cors_middleware_applied:
+            logger.warning(
+                "Reconfiguring CORS after gateway initialization. "
+                "For best results, configure CORS before calling start()."
+            )
+
+        # Add CORS middleware
+        self._gateway.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_config["allow_origins"],
+            allow_methods=cors_config["allow_methods"],
+            allow_headers=cors_config["allow_headers"],
+            allow_credentials=cors_config["allow_credentials"],
+            expose_headers=cors_config["expose_headers"],
+            max_age=cors_config["max_age"],
+        )
+
+        self._cors_middleware_applied = True
+
+    def configure_cors(
+        self,
+        allow_origins: Optional[List[str]] = None,
+        allow_methods: Optional[List[str]] = None,
+        allow_headers: Optional[List[str]] = None,
+        allow_credentials: Optional[bool] = None,
+        expose_headers: Optional[List[str]] = None,
+        max_age: Optional[int] = None,
+    ) -> "Nexus":
+        """Configure CORS middleware programmatically.
+
+        This method can be called before or after start(). If called after
+        the gateway is initialized, it will reconfigure the CORS middleware.
+
+        Args:
+            allow_origins: Allowed origins. If None, keeps current setting.
+            allow_methods: Allowed methods. If None, keeps current setting.
+            allow_headers: Allowed headers. If None, keeps current setting.
+            allow_credentials: Allow credentials. If None, keeps current setting.
+            expose_headers: Exposed headers. If None, keeps current setting.
+            max_age: Preflight cache duration. If None, keeps current setting.
+
+        Returns:
+            self (for method chaining)
+
+        Raises:
+            ValueError: If called in production with allow_origins=["*"].
+        """
+        if allow_origins is not None:
+            self._validate_cors_origins(allow_origins)
+            self._cors_origins = allow_origins
+
+        if allow_methods is not None:
+            self._cors_allow_methods = allow_methods
+
+        if allow_headers is not None:
+            self._cors_allow_headers = allow_headers
+
+        if allow_credentials is not None:
+            self._cors_allow_credentials = allow_credentials
+
+        if expose_headers is not None:
+            self._cors_expose_headers = expose_headers
+
+        if max_age is not None:
+            self._cors_max_age = max_age
+
+        # Validate security implications
+        self._validate_cors_security(self._build_cors_config())
+
+        # Apply if gateway already initialized
+        if self._gateway is not None:
+            self._apply_cors_middleware()
+
+        logger.info(f"CORS configured: origins={self._cors_origins}")
+        return self
+
+    @property
+    def cors_config(self) -> Dict[str, Any]:
+        """Current CORS configuration."""
+        return self._build_cors_config()
+
+    def is_origin_allowed(self, origin: str) -> bool:
+        """Check if an origin is allowed by current CORS configuration.
+
+        Args:
+            origin: Origin URL to check (e.g., "https://app.example.com")
+
+        Returns:
+            True if origin is allowed, False otherwise.
+        """
+        origins = self._cors_origins or self._get_cors_defaults()["allow_origins"]
+
+        if "*" in origins:
+            return True
+
+        return origin in origins
+
+    # =========================================================================
+    # Preset System API (WS01 - TODO-300D)
+    # =========================================================================
+
+    @property
+    def active_preset(self) -> Optional[str]:
+        """Name of the active preset, if any."""
+        return getattr(self, "_active_preset", None)
+
+    @property
+    def preset_config(self) -> Optional[Any]:
+        """Configuration used for the active preset."""
+        return getattr(self, "_nexus_config", None)
+
+    def describe_preset(self) -> Dict[str, Any]:
+        """Get detailed information about the active preset.
+
+        Returns:
+            Dictionary with preset name, description, middleware, and plugins.
+        """
+        if not self.active_preset:
+            return {"preset": None, "middleware": [], "plugins": []}
+
+        from nexus.presets import PRESETS
+
+        preset = PRESETS.get(self.active_preset)
+        description = preset.description if preset else ""
+
+        result: Dict[str, Any] = {
+            "preset": self.active_preset,
+            "description": description,
+            "middleware": [m.name for m in self._middleware_stack],
+            "plugins": list(self._plugins.keys()),
+        }
+
+        if self._nexus_config is not None:
+            result["config"] = {
+                "cors_origins": self._nexus_config.cors_origins,
+                "rate_limit": self._nexus_config.rate_limit,
+                "tenant_header": self._nexus_config.tenant_header,
+                "audit_enabled": self._nexus_config.audit_enabled,
+            }
+
+        return result
+
+    # =========================================================================
+    # Handler API
+    # =========================================================================
+
     def handler(
         self,
         name: str,
@@ -856,8 +1597,16 @@ Check the documentation or explore available resources.
                 f"handler_func must be callable, got {type(handler_func).__name__}"
             )
 
-        if not name or not name.strip():
-            raise ValueError("Handler name cannot be empty")
+        # Validate name for dangerous characters (defense-in-depth)
+        from nexus.validation import validate_workflow_name
+
+        validate_workflow_name(name)
+
+        if name in self._handler_registry:
+            raise ValueError(
+                f"Handler '{name}' is already registered. "
+                f"Use a different name or unregister the existing handler first."
+            )
 
         from kailash.nodes.handler import make_handler_workflow
 
@@ -1019,9 +1768,14 @@ Check the documentation or explore available resources.
             from kailash.runtime import get_runtime
 
             runtime = get_runtime("async")
-            result = await runtime.execute_workflow_async(workflow, inputs)
+            execution_result = await runtime.execute_workflow_async(workflow, inputs)
+            if isinstance(execution_result, tuple):
+                results, run_id = execution_result
+            else:
+                results = execution_result
+                run_id = None
 
-            return result
+            return results
         except HTTPException:
             # Re-raise HTTP exceptions as-is
             raise
@@ -1112,6 +1866,9 @@ Check the documentation or explore available resources.
             self._mcp_thread.start()
 
         self._running = True
+
+        # Call plugin startup hooks
+        self._call_startup_hooks()
 
         # Log successful startup
         self._log_startup_success()
@@ -1232,6 +1989,9 @@ Check the documentation or explore available resources.
             return
 
         logger.info("Stopping Nexus...")
+
+        # Call plugin shutdown hooks (reverse order)
+        self._call_shutdown_hooks()
 
         # Gateway cleanup is handled automatically by FastAPI's lifespan context manager
         # The lifespan shuts down the executor when uvicorn stops

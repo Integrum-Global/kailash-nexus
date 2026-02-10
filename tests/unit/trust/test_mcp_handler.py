@@ -697,7 +697,7 @@ class TestMCPHandlerThreadSafety:
                 mcp_session_id="session-copy-test",
             )
 
-        asyncio.get_event_loop().run_until_complete(add_entry())
+        asyncio.run(add_entry())
 
         # Get history twice
         history1 = handler.get_call_history()

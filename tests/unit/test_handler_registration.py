@@ -308,3 +308,50 @@ class TestWorkflowSandboxValidation:
                 msg for msg in caplog.messages if "not in the sandbox" in msg
             ]
             assert len(sandbox_warnings) == 0
+
+
+class TestDuplicateHandlerDetection:
+    """Tests for duplicate handler name detection (WS03 red team fix)."""
+
+    def test_duplicate_handler_name_raises_value_error(self):
+        """Registering a handler with the same name should raise ValueError."""
+        with patch("nexus.core.create_gateway") as mock_gw:
+            mock_gw.return_value = Mock()
+            from nexus import Nexus
+
+            app = Nexus()
+            app.register_handler("my_handler", sample_handler)
+
+            with pytest.raises(ValueError, match="already registered"):
+                app.register_handler("my_handler", another_handler)
+
+    def test_different_handler_names_succeed(self):
+        """Handlers with different names should register without error."""
+        with patch("nexus.core.create_gateway") as mock_gw:
+            mock_gw.return_value = Mock()
+            from nexus import Nexus
+
+            app = Nexus()
+            app.register_handler("handler_1", sample_handler)
+            app.register_handler("handler_2", another_handler)
+
+            assert "handler_1" in app._handler_registry
+            assert "handler_2" in app._handler_registry
+
+    def test_duplicate_via_decorator_raises(self):
+        """Duplicate handler name via @app.handler() decorator should raise."""
+        with patch("nexus.core.create_gateway") as mock_gw:
+            mock_gw.return_value = Mock()
+            from nexus import Nexus
+
+            app = Nexus()
+
+            @app.handler("greet")
+            async def greet_v1(name: str) -> dict:
+                return {"v": 1}
+
+            with pytest.raises(ValueError, match="already registered"):
+
+                @app.handler("greet")
+                async def greet_v2(name: str) -> dict:
+                    return {"v": 2}

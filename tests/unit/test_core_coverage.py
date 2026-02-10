@@ -46,7 +46,7 @@ class TestNexusInitialization:
         # Verify default parameters are set
         assert nexus._api_port == 8000
         assert nexus._mcp_port == 3001
-        assert nexus._auto_discovery_enabled is True
+        assert nexus._auto_discovery_enabled is False
         assert nexus._workflows == {}
         assert nexus._running is False
 
@@ -65,7 +65,7 @@ class TestNexusInitialization:
         assert call_args["enable_resource_management"] is True
         assert call_args["enable_async_execution"] is True
         assert call_args["enable_health_checks"] is True
-        assert call_args["cors_origins"] == ["*"]
+        assert call_args["cors_origins"] is None  # Nexus handles CORS natively
 
     @patch("nexus.core.create_gateway")
     def test_custom_port_initialization(self, mock_create_gateway):
@@ -110,8 +110,8 @@ class TestNexusInitialization:
 
         nexus = Nexus(rate_limit=None)
 
-        # Should not set _rate_limit attribute when rate_limit is None
-        assert not hasattr(nexus, "_rate_limit")
+        # _rate_limit is always set (stores the value for endpoint decorator)
+        assert nexus._rate_limit is None
 
 
 class TestNexusRevolutionaryCapabilities:
@@ -192,9 +192,11 @@ class TestNexusWorkflowManagement:
 
         nexus = Nexus()
 
-        # Create a mock workflow without build method
+        # Create a mock workflow without build method but with proper nodes attr
         mock_workflow = Mock()
         mock_workflow.validate = Mock(return_value=True)
+        mock_workflow.nodes = {}  # For _validate_workflow_sandbox
+        mock_workflow._node_instances = {}  # For _validate_workflow_sandbox
         # Ensure it doesn't have a build method
         del mock_workflow.build
 
@@ -219,6 +221,8 @@ class TestNexusWorkflowManagement:
 
         with patch.object(WorkflowBuilder, "build") as mock_build:
             mock_workflow = Mock()
+            mock_workflow.nodes = {}  # For _validate_workflow_sandbox
+            mock_workflow._node_instances = {}  # For _validate_workflow_sandbox
             mock_build.return_value = mock_workflow
 
             builder = WorkflowBuilder()
@@ -281,6 +285,8 @@ class TestNexusErrorHandling:
 
         nexus = Nexus()
         mock_workflow = Mock()
+        mock_workflow.nodes = {}  # For _validate_workflow_sandbox
+        mock_workflow._node_instances = {}  # For _validate_workflow_sandbox
         # Ensure it doesn't have a build method
         del mock_workflow.build
 
@@ -335,6 +341,10 @@ class TestNexusStateManagement:
         # Register multiple workflows
         mock_workflow1 = Mock()
         mock_workflow2 = Mock()
+        mock_workflow1.nodes = {}  # For _validate_workflow_sandbox
+        mock_workflow1._node_instances = {}
+        mock_workflow2.nodes = {}  # For _validate_workflow_sandbox
+        mock_workflow2._node_instances = {}
         # Ensure they don't have build methods
         del mock_workflow1.build
         del mock_workflow2.build
@@ -404,6 +414,12 @@ class TestNexusMultipleInstances:
         # Verify separate workflow storage
         mock_workflow1 = Mock()
         mock_workflow2 = Mock()
+        mock_workflow1.nodes = {}  # For _validate_workflow_sandbox
+        mock_workflow1._node_instances = {}
+        mock_workflow2.nodes = {}  # For _validate_workflow_sandbox
+        mock_workflow2._node_instances = {}
+        del mock_workflow1.build  # Prevent register() from calling .build()
+        del mock_workflow2.build
 
         with patch.object(mock_gateway1, "register_workflow"):
             with patch.object(mock_gateway2, "register_workflow"):

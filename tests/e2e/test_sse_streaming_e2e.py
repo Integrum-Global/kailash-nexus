@@ -24,8 +24,9 @@ from typing import Any, Dict, List
 
 import pytest
 import requests
-from kailash.workflow.builder import WorkflowBuilder
 from nexus import Nexus
+
+from kailash.workflow.builder import WorkflowBuilder
 
 
 def find_free_port(start_port: int = 8000) -> int:
@@ -271,12 +272,14 @@ class TestRealTimeChatStreaming:
     @pytest.fixture
     def chat_server(self):
         """Start server with chat workflow."""
+        api_port = find_free_port(8301)
         app = Nexus(
-            api_port=8301,
+            api_port=api_port,
             enable_durability=False,
             enable_auth=False,
             enable_monitoring=False,
         )
+        app._test_port = api_port
 
         # Simulate chat workflow
         workflow = WorkflowBuilder()
@@ -311,7 +314,7 @@ result = {'response': response, 'tokens': len(response.split())}
         2. Server streams response
         3. Client receives events in real-time
         """
-        url = "http://localhost:8301/workflows/chat/execute"
+        url = f"http://localhost:{chat_server._test_port}/workflows/chat/execute"
 
         # Send chat message
         response = requests.post(
@@ -338,7 +341,7 @@ result = {'response': response, 'tokens': len(response.split())}
 
         Real-time chat requires quick initial response.
         """
-        url = "http://localhost:8301/workflows/chat/execute"
+        url = f"http://localhost:{chat_server._test_port}/workflows/chat/execute"
 
         start_time = time.time()
 
@@ -372,12 +375,14 @@ class TestLongRunningWorkflows:
     @pytest.fixture
     def long_server(self):
         """Start server with long-running workflow."""
+        api_port = find_free_port(8302)
         app = Nexus(
-            api_port=8302,
+            api_port=api_port,
             enable_durability=False,
             enable_auth=False,
             enable_monitoring=False,
         )
+        app._test_port = api_port
 
         # Long-running workflow (5 seconds)
         workflow = WorkflowBuilder()
@@ -411,7 +416,7 @@ result = {'status': 'completed', 'duration': 5}
         - Send keepalive comments
         - Eventually send complete event
         """
-        url = "http://localhost:8302/workflows/long_task/execute"
+        url = f"http://localhost:{long_server._test_port}/workflows/long_task/execute"
 
         start_time = time.time()
 
@@ -435,7 +440,7 @@ result = {'status': 'completed', 'duration': 5}
         For workflows >15 seconds, should send `:keepalive` comments.
         For 5-second workflow, may or may not have keepalive.
         """
-        url = "http://localhost:8302/workflows/long_task/execute"
+        url = f"http://localhost:{long_server._test_port}/workflows/long_task/execute"
 
         response = requests.post(
             url, json={"mode": "stream"}, stream=True, timeout=20.0
@@ -462,12 +467,14 @@ class TestConcurrentSSEConnections:
     @pytest.fixture
     def concurrent_server(self):
         """Start server for concurrency testing."""
+        api_port = find_free_port(8303)
         app = Nexus(
-            api_port=8303,
+            api_port=api_port,
             enable_durability=False,
             enable_auth=False,
             enable_monitoring=False,
         )
+        app._test_port = api_port
 
         workflow = WorkflowBuilder()
         workflow.add_node(
@@ -498,7 +505,7 @@ result = {'worker_id': random.randint(1, 100)}
 
         Simulates 10 concurrent chat users.
         """
-        url = "http://localhost:8303/workflows/concurrent/execute"
+        url = f"http://localhost:{concurrent_server._test_port}/workflows/concurrent/execute"
 
         # Create 10 concurrent requests
         def stream_request():
@@ -536,7 +543,7 @@ result = {'worker_id': random.randint(1, 100)}
 
         Each connection should receive its own independent event stream.
         """
-        url = "http://localhost:8303/workflows/concurrent/execute"
+        url = f"http://localhost:{concurrent_server._test_port}/workflows/concurrent/execute"
 
         # Start two connections simultaneously
         def get_events():
@@ -569,12 +576,14 @@ class TestSSENetworkReliability:
     @pytest.fixture
     def reliability_server(self):
         """Start server for reliability testing."""
+        api_port = find_free_port(8304)
         app = Nexus(
-            api_port=8304,
+            api_port=api_port,
             enable_durability=False,
             enable_auth=False,
             enable_monitoring=False,
         )
+        app._test_port = api_port
 
         workflow = WorkflowBuilder()
         workflow.add_node(
@@ -597,7 +606,7 @@ class TestSSENetworkReliability:
 
         Client might set aggressive timeouts. Server should handle properly.
         """
-        url = "http://localhost:8304/workflows/reliable/execute"
+        url = f"http://localhost:{reliability_server._test_port}/workflows/reliable/execute"
 
         # Test with short timeout (should still succeed for 0.5s workflow)
         response = requests.post(
@@ -611,7 +620,7 @@ class TestSSENetworkReliability:
 
         If stream is interrupted, client should be able to reconnect.
         """
-        url = "http://localhost:8304/workflows/reliable/execute"
+        url = f"http://localhost:{reliability_server._test_port}/workflows/reliable/execute"
 
         # First connection
         event_source1 = EventSourceSimulator(url)
@@ -643,12 +652,14 @@ class TestProductionDeploymentScenarios:
     @pytest.fixture
     def production_server(self):
         """Start server simulating production config."""
+        api_port = find_free_port(8305)
         app = Nexus(
-            api_port=8305,
+            api_port=api_port,
             enable_durability=False,
             enable_auth=False,
             enable_monitoring=False,
         )
+        app._test_port = api_port
 
         workflow = WorkflowBuilder()
         workflow.add_node(
@@ -671,7 +682,7 @@ class TestProductionDeploymentScenarios:
 
         Critical for nginx deployments to get immediate event delivery.
         """
-        url = "http://localhost:8305/workflows/prod/execute"
+        url = f"http://localhost:{production_server._test_port}/workflows/prod/execute"
 
         response = requests.post(url, json={"mode": "stream"}, stream=True, timeout=5.0)
 
@@ -687,7 +698,7 @@ class TestProductionDeploymentScenarios:
 
         Browsers making cross-origin requests need CORS headers.
         """
-        url = "http://localhost:8305/workflows/prod/execute"
+        url = f"http://localhost:{production_server._test_port}/workflows/prod/execute"
 
         # Simulate browser cross-origin request
         response = requests.post(
@@ -706,7 +717,7 @@ class TestProductionDeploymentScenarios:
 
         After stream completes, resources should be freed.
         """
-        url = "http://localhost:8305/workflows/prod/execute"
+        url = f"http://localhost:{production_server._test_port}/workflows/prod/execute"
 
         # Run multiple streams sequentially
         for _ in range(5):
@@ -724,7 +735,7 @@ class TestProductionDeploymentScenarios:
 
         Load balancers might add latency but should pass through SSE.
         """
-        url = "http://localhost:8305/workflows/prod/execute"
+        url = f"http://localhost:{production_server._test_port}/workflows/prod/execute"
 
         # Simulate load balancer scenario
         response = requests.post(

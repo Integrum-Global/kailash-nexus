@@ -15,6 +15,20 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../src"))
 
 
+@pytest.fixture(autouse=True)
+def reset_global_state():
+    """Reset global singletons before each test to prevent cross-test pollution."""
+    import nexus.channels
+    import nexus.plugins
+
+    nexus.channels._channel_manager = None
+    nexus.plugins._registry = None
+    yield
+    # Also reset after test to leave clean state
+    nexus.channels._channel_manager = None
+    nexus.plugins._registry = None
+
+
 class TestChannelManager:
     """Test the actual ChannelManager class functionality."""
 
@@ -32,7 +46,8 @@ class TestChannelManager:
         assert "cli" in manager._channels
         assert "mcp" in manager._channels
 
-    def test_configure_api(self):
+    @patch("nexus.channels.is_port_available", return_value=True)
+    def test_configure_api(self, mock_port):
         """Test API channel configuration."""
         from nexus.channels import ChannelManager
 
@@ -321,7 +336,8 @@ class TestGlobalChannelManager:
         manager2 = get_channel_manager()
         assert manager1 is manager2
 
-    def test_convenience_functions(self):
+    @patch("nexus.channels.is_port_available", return_value=True)
+    def test_convenience_functions(self, mock_port):
         """Test convenience configuration functions."""
         from nexus.channels import configure_api, configure_cli, configure_mcp
 

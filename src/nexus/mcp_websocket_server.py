@@ -183,11 +183,14 @@ class MCPWebSocketServer:
                         node_params[node_id] = {"parameters": tool_args}
 
                     # Execute with async runtime (no thread wrapper needed)
-                    result_dict = await runtime.execute_workflow_async(
+                    execution_result = await runtime.execute_workflow_async(
                         workflow, inputs=node_params
                     )
-                    results = result_dict.get("results", result_dict)
-                    run_id = result_dict.get("run_id", None)
+                    if isinstance(execution_result, tuple):
+                        results, run_id = execution_result
+                    else:
+                        results = execution_result.get("results", execution_result)
+                        run_id = execution_result.get("run_id", None)
 
                     # Extract result from the workflow execution
                     # Results format: {"node_id": {"result": value}}

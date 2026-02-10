@@ -318,8 +318,9 @@ class TestNexusPerformanceMetrics:
 
     def test_track_performance_metrics(self):
         """Test that performance metrics are tracked during operations."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         app = Nexus()
 
@@ -359,8 +360,9 @@ class TestNexusChannelMethods:
 
     def test_register_multi_channel(self):
         """Test workflow registration with enterprise gateway."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gw = Mock()
@@ -387,8 +389,9 @@ class TestNexusWorkflowHandling:
 
     def test_register_with_builder(self):
         """Test registering WorkflowBuilder vs Workflow."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gw = Mock()
@@ -430,8 +433,9 @@ class TestNexusWorkflowHandling:
 
     def test_register_duplicate_name(self):
         """Test registration with duplicate name fails in enterprise gateway."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gw = Mock()
@@ -466,8 +470,9 @@ class TestNexusEdgeCases:
 
     def test_empty_workflow_name(self):
         """Test registration with empty name."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         app = Nexus()
         workflow = WorkflowBuilder()
@@ -481,8 +486,9 @@ class TestNexusEdgeCases:
 
     def test_very_long_workflow_name(self):
         """Test registration with very long name."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         app = Nexus()
         workflow = WorkflowBuilder()
@@ -497,8 +503,9 @@ class TestNexusEdgeCases:
 
     def test_special_characters_in_name(self):
         """Test registration with special characters."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         app = Nexus()
         workflow = WorkflowBuilder()
@@ -585,9 +592,9 @@ class TestNexusConstructorOptions:
         app = Nexus(rate_limit=1000000)
         assert app._rate_limit == 1000000
 
-        # Zero rate limit (falsy) - attribute not set
+        # Zero rate limit - _rate_limit is always set (stores value for endpoint decorator)
         app = Nexus(rate_limit=0)
-        assert not hasattr(app, "_rate_limit")
+        assert app._rate_limit == 0
 
         # Negative rate limit - accepted by constructor (no validation)
         app = Nexus(rate_limit=-1)

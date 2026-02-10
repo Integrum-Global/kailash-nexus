@@ -82,6 +82,7 @@ curl http://localhost:8000/workflows
 ```
 
 Response:
+
 ```json
 {
   "data-fetcher": {
@@ -101,13 +102,14 @@ Response:
 
 Every workflow registered with Nexus automatically gets three standard endpoints:
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/workflows/{name}/execute` | Execute the workflow |
-| GET | `/workflows/{name}/workflow/info` | Get workflow metadata |
-| GET | `/workflows/{name}/health` | Health check |
+| Method | Path                              | Description           |
+| ------ | --------------------------------- | --------------------- |
+| POST   | `/workflows/{name}/execute`       | Execute the workflow  |
+| GET    | `/workflows/{name}/workflow/info` | Get workflow metadata |
+| GET    | `/workflows/{name}/health`        | Health check          |
 
 **Example:**
+
 ```bash
 # Execute workflow
 curl -X POST http://localhost:8000/workflows/data-fetcher/execute \
@@ -481,25 +483,29 @@ else:
 Add advanced features as needed:
 
 ```python
+import os
 from nexus import Nexus
+from nexus.auth.plugin import NexusAuthPlugin
+from nexus.auth import JWTConfig
 
 # Start simple
 app = Nexus()
 
-# Add authentication when ready
-app.enable_auth()
+# Add authentication via NexusAuthPlugin
+auth = NexusAuthPlugin.basic_auth(
+    jwt=JWTConfig(secret=os.environ["JWT_SECRET"])
+)
+app.add_plugin(auth)
 
-# Add monitoring when needed
-app.enable_monitoring()
+# Enable monitoring via constructor
+app = Nexus(enable_monitoring=True)
 
-# Use plugins for specific features
-app.use_plugin("rate_limiting")
-app.use_plugin("audit_logging")
+# Use handler pattern for simple workflows
+@app.handler("status", description="Status check")
+async def status() -> dict:
+    return {"status": "ok"}
 
-# Configuration objects for fine-tuning
-app.auth.strategy = "oauth2"
-app.monitoring.interval = 30
-app.api.cors_enabled = True
+app.start()
 ```
 
 ## Best Practices

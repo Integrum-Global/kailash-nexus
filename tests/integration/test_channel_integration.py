@@ -7,9 +7,11 @@ NO MOCKING - uses actual SDK components.
 import asyncio
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,19 @@ import requests
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from utils.docker_utils import DockerTestEnvironment
+
+
+def find_free_port(start_port: int = 8000) -> int:
+    """Find a free port starting from start_port."""
+    for port in range(start_port, start_port + 100):
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            try:
+                s.bind(("", port))
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"Could not find free port starting from {start_port}")
 
 
 @pytest.fixture(scope="module")
@@ -35,8 +50,9 @@ class TestAPIChannelIntegration:
     @pytest.mark.integration
     def test_api_workflow_execution(self, docker_env):
         """Test workflow execution via API."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         # Create data processing workflow (using hardcoded test data)
         workflow = WorkflowBuilder()
@@ -62,8 +78,9 @@ result = {
             },
         )
 
-        # Use unique port to avoid conflicts
-        n = Nexus(api_port=8001)
+        # Use dynamic port to avoid conflicts
+        api_port = find_free_port(8001)
+        n = Nexus(api_port=api_port)
         n.register("data-processor", workflow.build())
 
         # Start server
@@ -85,7 +102,7 @@ result = {
             }
 
             response = requests.post(
-                "http://localhost:8001/workflows/data-processor",
+                f"http://localhost:{api_port}/workflows/data-processor",
                 json={"input_data": test_data},
             )
 
@@ -111,8 +128,9 @@ result = {
     @pytest.mark.integration
     def test_api_error_handling(self, docker_env):
         """Test API error handling with real errors."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         # Create workflow that errors
         workflow = WorkflowBuilder()
@@ -120,8 +138,9 @@ result = {
             "PythonCodeNode", "error", {"code": "raise ValueError('Test error')"}
         )
 
-        # Use unique port to avoid conflicts
-        n = Nexus(api_port=8002)
+        # Use dynamic port to avoid conflicts
+        api_port = find_free_port(8002)
+        n = Nexus(api_port=api_port)
         n.register("error-workflow", workflow.build())
 
         # Start server
@@ -133,7 +152,9 @@ result = {
         time.sleep(2)
 
         try:
-            response = requests.post("http://localhost:8002/workflows/error-workflow")
+            response = requests.post(
+                f"http://localhost:{api_port}/workflows/error-workflow"
+            )
 
             # Workflow execution errors return 500 status (correct HTTP behavior)
             assert response.status_code == 500
@@ -155,12 +176,14 @@ class TestCLIChannelIntegration:
     @pytest.mark.integration
     def test_cli_workflow_listing(self, docker_env):
         """Test listing workflows via CLI."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
 
+        from kailash.workflow.builder import WorkflowBuilder
+
         # Create test workflows
-        # Use unique port to avoid conflicts
-        n = Nexus(api_port=8003)
+        # Use dynamic port to avoid conflicts
+        api_port = find_free_port(8003)
+        n = Nexus(api_port=api_port)
 
         for i in range(3):
             workflow = WorkflowBuilder()
@@ -179,10 +202,15 @@ class TestCLIChannelIntegration:
 
         try:
             # List workflows via CLI
-            # Add src directory to PYTHONPATH for subprocess
+            # Add src directories to PYTHONPATH for subprocess
             env = os.environ.copy()
-            src_path = os.path.join(os.path.dirname(__file__), "../../src")
-            env["PYTHONPATH"] = f"{src_path}:{env.get('PYTHONPATH', '')}"
+            nexus_src_path = os.path.join(os.path.dirname(__file__), "../../src")
+            kailash_src_path = os.path.join(
+                os.path.dirname(__file__), "../../../../src"
+            )
+            env["PYTHONPATH"] = (
+                f"{nexus_src_path}:{kailash_src_path}:{env.get('PYTHONPATH', '')}"
+            )
 
             result = subprocess.run(
                 [
@@ -190,7 +218,7 @@ class TestCLIChannelIntegration:
                     "-m",
                     "nexus.cli",
                     "--url",
-                    "http://localhost:8003",
+                    f"http://localhost:{api_port}",
                     "list",
                 ],
                 capture_output=True,
@@ -211,8 +239,9 @@ class TestCLIChannelIntegration:
     @pytest.mark.integration
     def test_cli_workflow_execution(self, docker_env):
         """Test executing workflow via CLI."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         # Create workflow (using hardcoded test data to avoid parameters issue)
         workflow = WorkflowBuilder()
@@ -228,8 +257,9 @@ result = {'greeting': f'Hello, {name}!'}
             },
         )
 
-        # Use unique port to avoid conflicts
-        n = Nexus(api_port=8004)
+        # Use dynamic port to avoid conflicts
+        api_port = find_free_port(8004)
+        n = Nexus(api_port=api_port)
         n.register("greeter", workflow.build())
 
         # Start server
@@ -242,10 +272,15 @@ result = {'greeting': f'Hello, {name}!'}
 
         try:
             # Execute with parameters
-            # Add src directory to PYTHONPATH for subprocess
+            # Add src directories to PYTHONPATH for subprocess
             env = os.environ.copy()
-            src_path = os.path.join(os.path.dirname(__file__), "../../src")
-            env["PYTHONPATH"] = f"{src_path}:{env.get('PYTHONPATH', '')}"
+            nexus_src_path = os.path.join(os.path.dirname(__file__), "../../src")
+            kailash_src_path = os.path.join(
+                os.path.dirname(__file__), "../../../../src"
+            )
+            env["PYTHONPATH"] = (
+                f"{nexus_src_path}:{kailash_src_path}:{env.get('PYTHONPATH', '')}"
+            )
 
             result = subprocess.run(
                 [
@@ -253,7 +288,7 @@ result = {'greeting': f'Hello, {name}!'}
                     "-m",
                     "nexus.cli",
                     "--url",
-                    "http://localhost:8004",
+                    f"http://localhost:{api_port}",
                     "run",
                     "greeter",
                     "--param",
@@ -280,14 +315,17 @@ class TestMCPChannelIntegration:
     )
     async def test_mcp_tool_discovery(self, docker_env):
         """Test MCP tool discovery from workflows."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
         from nexus.mcp import SimpleMCPClient
 
+        from kailash.workflow.builder import WorkflowBuilder
+
         # Create workflows
-        # Use unique port to avoid conflicts
+        # Use dynamic port to avoid conflicts
         # Enable HTTP transport for MCP to ensure tools are exposed
-        n = Nexus(api_port=8005, mcp_port=3002, enable_http_transport=True)
+        api_port = find_free_port(8005)
+        mcp_port = find_free_port(3002)
+        n = Nexus(api_port=api_port, mcp_port=mcp_port, enable_http_transport=True)
 
         # Data analysis workflow (using hardcoded test data)
         analysis = WorkflowBuilder()
@@ -318,7 +356,7 @@ result = {
 
         try:
             # Connect MCP client
-            client = SimpleMCPClient("localhost", 3002)
+            client = SimpleMCPClient("localhost", mcp_port)
             await client.connect()
 
             # Discover tools
@@ -344,13 +382,16 @@ result = {
     )
     async def test_mcp_resource_access(self, docker_env):
         """Test MCP resource access for workflows."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
         from nexus.mcp import SimpleMCPClient
 
-        # Use unique port to avoid conflicts
+        from kailash.workflow.builder import WorkflowBuilder
+
+        # Use dynamic port to avoid conflicts
         # Enable HTTP transport for MCP to ensure resources are exposed
-        n = Nexus(api_port=8006, mcp_port=3003, enable_http_transport=True)
+        api_port = find_free_port(8006)
+        mcp_port = find_free_port(3003)
+        n = Nexus(api_port=api_port, mcp_port=mcp_port, enable_http_transport=True)
 
         # Workflow that produces data
         producer = WorkflowBuilder()
@@ -378,7 +419,7 @@ result = {
 
         try:
             # Connect MCP client
-            client = SimpleMCPClient("localhost", 3003)
+            client = SimpleMCPClient("localhost", mcp_port)
             await client.connect()
 
             # List resources (via list_tools for now - resources are exposed as tools)

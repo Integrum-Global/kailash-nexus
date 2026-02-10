@@ -1,19 +1,46 @@
-"""Kailash Nexus - Zero-configuration workflow orchestration.
+"""Kailash Nexus - Zero-Config Multi-Channel Workflow Platform.
 
-The simplest way to expose workflows across API, CLI, and MCP channels.
+Deploy Kailash workflows across API, CLI, and MCP channels with built-in
+middleware, CORS, plugins, and preset configurations.
 
 Usage:
     from nexus import Nexus
 
-    app = Nexus()  # Simple case
+    # Simple case with CORS
+    app = Nexus(cors_origins=["http://localhost:3000"])
+    app.register("my_workflow", workflow.build())
     app.start()
 
-    # Or with enterprise features
-    app = Nexus(enable_auth=True, enable_monitoring=True)
+    # With preset (one-line middleware stack)
+    app = Nexus(preset="lightweight", cors_origins=["http://localhost:3000"])
+    app.start()
+
+    # Enterprise features
+    app = Nexus(
+        preset="saas",
+        cors_origins=["https://app.example.com"],
+        enable_auth=True,
+        enable_monitoring=True,
+    )
     app.start()
 """
 
-from .core import Nexus, create_nexus
+from .core import MiddlewareInfo, Nexus, NexusPluginProtocol, RouterInfo, create_nexus
+from .presets import PRESETS, NexusConfig, PresetConfig, apply_preset, get_preset
 
-__version__ = "1.2.0"
-__all__ = ["Nexus", "create_nexus"]
+__version__ = "1.3.0"
+__all__ = [
+    # Core
+    "Nexus",
+    "create_nexus",
+    # Middleware API
+    "MiddlewareInfo",
+    "RouterInfo",
+    "NexusPluginProtocol",
+    # Preset System
+    "NexusConfig",
+    "PresetConfig",
+    "PRESETS",
+    "get_preset",
+    "apply_preset",
+]

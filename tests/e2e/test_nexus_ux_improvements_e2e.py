@@ -11,12 +11,28 @@ These tests validate the complete UX improvement package.
 """
 
 import logging
+import socket
 import time
+from contextlib import closing
 from pathlib import Path
 
 import requests
-from kailash.workflow.builder import WorkflowBuilder
 from nexus import Nexus
+
+from kailash.workflow.builder import WorkflowBuilder
+
+
+def find_free_port(start_port: int = 8000) -> int:
+    """Find a free port starting from start_port."""
+    for port in range(start_port, start_port + 100):
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            try:
+                s.bind(("", port))
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"Could not find free port starting from {start_port}")
 
 
 def test_complete_registration_journey_with_enhanced_logging(caplog):
@@ -31,8 +47,10 @@ def test_complete_registration_journey_with_enhanced_logging(caplog):
     """
     caplog.set_level(logging.INFO)
 
+    api_port = find_free_port(8001)
+
     # Step 1: Create Nexus instance
-    app = Nexus(api_port=8001)
+    app = Nexus(api_port=api_port)
 
     # Step 2: Register workflow
     workflow = WorkflowBuilder()
@@ -56,13 +74,13 @@ result = {
 
     # Should show full URLs with port
     assert (
-        "http://localhost:8001/workflows/greeter/execute" in log_output
+        f"http://localhost:{api_port}/workflows/greeter/execute" in log_output
     ), "Enhanced logging should show full execute endpoint URL"
     assert (
-        "http://localhost:8001/workflows/greeter/workflow/info" in log_output
+        f"http://localhost:{api_port}/workflows/greeter/workflow/info" in log_output
     ), "Enhanced logging should show full workflow/info endpoint URL"
     assert (
-        "http://localhost:8001/workflows/greeter/health" in log_output
+        f"http://localhost:{api_port}/workflows/greeter/health" in log_output
     ), "Enhanced logging should show full health endpoint URL"
 
     # Should show HTTP methods
@@ -95,8 +113,10 @@ def test_404_handler_in_nexus_mounted_context(caplog):
     import threading
     import time
 
+    api_port = find_free_port(8002)
+
     # Create Nexus instance
-    app = Nexus(api_port=8002)
+    app = Nexus(api_port=api_port)
 
     workflow = WorkflowBuilder()
     workflow.add_node("PythonCodeNode", "calc", {"code": "result = {'answer': 42}"})
@@ -116,7 +136,7 @@ def test_404_handler_in_nexus_mounted_context(caplog):
     # Try to access invalid endpoint through Nexus
     try:
         response = requests.get(
-            "http://localhost:8002/workflows/calculator/invalid", timeout=5
+            f"http://localhost:{api_port}/workflows/calculator/invalid", timeout=5
         )
 
         # Should return 404
@@ -142,7 +162,7 @@ def test_404_handler_in_nexus_mounted_context(caplog):
 
         # Verify that valid endpoints DO work by testing health endpoint
         health_response = requests.get(
-            "http://localhost:8002/workflows/calculator/health", timeout=5
+            f"http://localhost:{api_port}/workflows/calculator/health", timeout=5
         )
         assert (
             health_response.status_code == 200
@@ -170,7 +190,9 @@ def test_end_to_end_user_discovery_flow():
     import threading
     import time
 
-    app = Nexus(api_port=8003)
+    api_port = find_free_port(8003)
+
+    app = Nexus(api_port=api_port)
 
     # Register a test workflow
     workflow = WorkflowBuilder()
@@ -202,7 +224,7 @@ result = {
 
     try:
         # Step 1: List all workflows
-        response = requests.get("http://localhost:8003/workflows", timeout=5)
+        response = requests.get(f"http://localhost:{api_port}/workflows", timeout=5)
         assert response.status_code == 200, "Should be able to list workflows"
 
         workflows = response.json()
@@ -212,7 +234,8 @@ result = {
 
         # Step 2: Get workflow info
         response = requests.get(
-            "http://localhost:8003/workflows/data_processor/workflow/info", timeout=5
+            f"http://localhost:{api_port}/workflows/data_processor/workflow/info",
+            timeout=5,
         )
         assert response.status_code == 200, "Should be able to get workflow info"
 
@@ -221,7 +244,7 @@ result = {
 
         # Step 3: Execute workflow
         response = requests.post(
-            "http://localhost:8003/workflows/data_processor/execute",
+            f"http://localhost:{api_port}/workflows/data_processor/execute",
             json={"inputs": {}},
             timeout=5,
         )
@@ -286,7 +309,9 @@ def test_regression_existing_functionality_preserved():
     3. Workflow info endpoint works
     4. No breaking changes introduced
     """
-    app = Nexus(api_port=8004)
+    api_port = find_free_port(8004)
+
+    app = Nexus(api_port=api_port)
 
     # Create workflow similar to existing examples
     workflow = WorkflowBuilder()
@@ -321,7 +346,7 @@ result = {
     try:
         # Test health endpoint
         response = requests.get(
-            "http://localhost:8004/workflows/compute_workflow/health", timeout=5
+            f"http://localhost:{api_port}/workflows/compute_workflow/health", timeout=5
         )
         assert response.status_code == 200, "Health endpoint should work"
         health = response.json()
@@ -331,7 +356,8 @@ result = {
 
         # Test workflow info endpoint
         response = requests.get(
-            "http://localhost:8004/workflows/compute_workflow/workflow/info", timeout=5
+            f"http://localhost:{api_port}/workflows/compute_workflow/workflow/info",
+            timeout=5,
         )
         assert response.status_code == 200, "Workflow info endpoint should work"
         info = response.json()
@@ -339,7 +365,7 @@ result = {
 
         # Test execution endpoint
         response = requests.post(
-            "http://localhost:8004/workflows/compute_workflow/execute",
+            f"http://localhost:{api_port}/workflows/compute_workflow/execute",
             json={"inputs": {}},
             timeout=5,
         )

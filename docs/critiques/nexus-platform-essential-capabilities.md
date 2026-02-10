@@ -13,6 +13,7 @@ Based on comprehensive analysis of Kailash's gateway capabilities and Nexus inno
 Nexus represents a fundamental evolution from traditional request-response architectures to **workflow-native, durable, multi-channel orchestration platforms**. This is not incremental improvement - this is architectural revolution.
 
 **Traditional Approach:**
+
 ```python
 # Multiple separate systems, best-effort execution
 api_server = FastAPI()           # HTTP only
@@ -22,6 +23,7 @@ mcp_server = MCPServer()         # Another separate server
 ```
 
 **Nexus Revolutionary Approach:**
+
 ```python
 # Single unified platform, durable by design
 from nexus import Nexus
@@ -66,6 +68,7 @@ class ProcessDataRequest(DurableRequest):
 **Why Essential**: This eliminates the fundamental reliability problems of traditional gateways. Work is never lost, failures are automatically recoverable, and complete audit trails are provided by design.
 
 **Implementation Requirements**:
+
 - ✅ Request deduplication
 - ✅ Automatic retry with exponential backoff
 - ✅ State persistence at each step
@@ -95,6 +98,7 @@ nexus.register("data-processor", workflow)
 **Why Essential**: This solves the fundamental problem of building separate systems for different interfaces. Enterprise teams need unified access patterns, not interface silos.
 
 **Implementation Requirements**:
+
 - ✅ Unified workflow registration
 - ✅ Automatic endpoint generation
 - ✅ Cross-channel session management
@@ -119,6 +123,7 @@ gateway = create_gateway(
 **Why Essential**: Traditional frameworks start minimal and require extensive configuration for production readiness. Nexus must provide enterprise-grade capabilities from line one.
 
 **Implementation Requirements**:
+
 - ✅ EnterpriseWorkflowServer as default
 - ✅ Built-in authentication and authorization
 - ✅ Automatic monitoring and observability
@@ -138,9 +143,9 @@ enterprise_app = Nexus(enable_auth=True, enable_monitoring=True)
 dev_app = Nexus(api_port=8000)
 prod_app = Nexus(api_port=8080, enable_auth=True)
 
-# Fine-tuning via attributes
-app.auth.strategy = "rbac"
-app.monitoring.interval = 30
+# Fine-tuning via plugins and constructor
+# Auth: app.add_plugin(NexusAuthPlugin.saas_app(...))
+# Monitoring: Nexus(enable_monitoring=True)
 ```
 
 **Why Essential**: Prevents the confusion and ownership issues of hidden global singletons. Developers need explicit control over their application instances.
@@ -249,6 +254,7 @@ controller = AdaptivePoolController(
 ## 🚫 Capabilities We Must NOT Include
 
 ### 1. **Configuration Hell** - AVOID
+
 ```python
 # ❌ This is what killed Nexus v1
 config = NexusConfig(
@@ -261,6 +267,7 @@ config = NexusConfig(
 **Why Avoid**: Configuration complexity defeats the purpose of simplicity. Sensible defaults and convention over configuration.
 
 ### 2. **Abstraction Inversion** - AVOID
+
 ```python
 # ❌ Don't wrap SDK channels with more complexity
 class APIChannelWrapper:
@@ -271,6 +278,7 @@ class APIChannelWrapper:
 **Why Avoid**: The SDK already provides excellent abstractions. Additional layers add complexity without value.
 
 ### 3. **Feature Creep** - AVOID
+
 ```python
 # ❌ Don't build enterprise features users didn't ask for
 self.marketplace = MarketplaceRegistry()  # Solving non-existent problems
@@ -285,6 +293,7 @@ self.disaster_recovery = DisasterRecoveryManager()  # Over-engineering
 ### For Users (What Success Looks Like)
 
 **Data Scientist:**
+
 ```python
 # Should be able to do this in <5 minutes
 from nexus import Nexus
@@ -295,6 +304,7 @@ app.start()
 ```
 
 **Enterprise Developer:**
+
 ```python
 # Should get production features by default
 app = Nexus()  # Enterprise-ready from line one
@@ -304,6 +314,7 @@ app.start()
 ```
 
 **AI Agent Developer:**
+
 ```python
 # Should get MCP tools automatically
 workflow = WorkflowBuilder()
@@ -363,6 +374,7 @@ app.register("ai-assistant", workflow)
 ### Market Differentiation
 
 **Nexus must be the only platform that provides:**
+
 - **Durability by Design**: Only platform with request-level durability
 - **Multi-Channel Native**: Only unified API/CLI/MCP orchestration
 - **Enterprise-First**: Only platform with enterprise features as defaults
@@ -371,16 +383,19 @@ app.register("ai-assistant", workflow)
 ### Enterprise Value Proposition
 
 **Faster Time-to-Market:**
+
 - Single-line deployment vs weeks of infrastructure setup
 - Pre-built enterprise components vs custom development
 - Built-in compliance vs afterthought implementation
 
 **Reduced Operational Risk:**
+
 - Automatic durability vs manual retry logic
 - Built-in monitoring vs separate APM setup
 - Enterprise security vs bolt-on approaches
 
 **Lower Total Cost of Ownership:**
+
 - Unified platform vs multiple specialized tools
 - Automatic scaling vs manual infrastructure management
 - Built-in enterprise features vs license proliferation
@@ -388,18 +403,21 @@ app.register("ai-assistant", workflow)
 ## 🎯 Implementation Priorities
 
 ### Phase 1: Core Foundation (Must Have)
+
 1. Durable gateway architecture with request checkpointing
 2. Multi-channel workflow registration and execution
 3. FastAPI-style explicit instance management
 4. Basic cross-channel session synchronization
 
 ### Phase 2: Enterprise Integration (Must Have)
+
 1. Enterprise-default server configurations
 2. Production-grade monitoring and observability
 3. Resource management with intelligent pooling
 4. Event-driven real-time communication
 
 ### Phase 3: Advanced Capabilities (Should Have)
+
 1. Circuit breaker and bulkhead patterns
 2. Distributed transaction management
 3. Advanced security and compliance features

@@ -44,7 +44,7 @@ class TestRevolutionaryNexusCore:
         # Verify smart defaults
         assert app._api_port == 8000
         assert app._mcp_port == 3001
-        assert app._auto_discovery_enabled is True
+        assert app._auto_discovery_enabled is False
 
     def test_enterprise_default_philosophy(self):
         """Test that enterprise features are enabled by default."""
@@ -107,8 +107,9 @@ class TestRevolutionaryNexusCore:
 
     def test_multi_channel_workflow_registration(self):
         """Test revolutionary multi-channel workflow registration."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         app = Nexus()
 
@@ -315,8 +316,9 @@ class TestRevolutionaryNexusCore:
 
     def test_workflow_builder_handling(self):
         """Test proper handling of WorkflowBuilder vs Workflow instances."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         app = Nexus()
 
@@ -368,8 +370,9 @@ class TestRevolutionaryNexusCore:
 
     def test_realistic_performance_measurement(self):
         """Test realistic performance measurement (not impossibly fast)."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         app = Nexus()
 

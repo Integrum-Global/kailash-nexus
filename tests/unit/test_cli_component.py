@@ -1,6 +1,7 @@
 """Unit tests for CLI channel integration component."""
 
 import json
+import os
 import subprocess
 import sys
 from unittest.mock import Mock, patch
@@ -188,12 +189,15 @@ class TestNexusCLI:
         # Test that the module is discoverable
         import os
 
-        # Get the Nexus src directory
+        # Get the Nexus src directory and kailash core SDK src directory
         nexus_root = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
+        kailash_root = os.path.dirname(os.path.dirname(nexus_root))
         env = os.environ.copy()
-        env["PYTHONPATH"] = os.path.join(nexus_root, "src")
+        nexus_src = os.path.join(nexus_root, "src")
+        kailash_src = os.path.join(kailash_root, "src")
+        env["PYTHONPATH"] = f"{nexus_src}:{kailash_src}:{env.get('PYTHONPATH', '')}"
 
         result = subprocess.run(
             ["python", "-c", "import nexus.cli; print('success')"],
@@ -282,12 +286,15 @@ class TestCLIIntegration:
         """Test CLI help output."""
         import os
 
-        # Get the Nexus src directory
+        # Get the Nexus src directory and kailash core SDK src directory
         nexus_root = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
+        kailash_root = os.path.dirname(os.path.dirname(nexus_root))
         env = os.environ.copy()
-        env["PYTHONPATH"] = os.path.join(nexus_root, "src")
+        nexus_src = os.path.join(nexus_root, "src")
+        kailash_src = os.path.join(kailash_root, "src")
+        env["PYTHONPATH"] = f"{nexus_src}:{kailash_src}:{env.get('PYTHONPATH', '')}"
 
         result = subprocess.run(
             ["python", "-m", "nexus.cli", "--help"],
@@ -305,12 +312,15 @@ class TestCLIIntegration:
         """Test CLI list command help."""
         import os
 
-        # Get the Nexus src directory
+        # Get the Nexus src directory and kailash core SDK src directory
         nexus_root = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
+        kailash_root = os.path.dirname(os.path.dirname(nexus_root))
         env = os.environ.copy()
-        env["PYTHONPATH"] = os.path.join(nexus_root, "src")
+        nexus_src = os.path.join(nexus_root, "src")
+        kailash_src = os.path.join(kailash_root, "src")
+        env["PYTHONPATH"] = f"{nexus_src}:{kailash_src}:{env.get('PYTHONPATH', '')}"
 
         result = subprocess.run(
             ["python", "-m", "nexus.cli", "list", "--help"],
@@ -327,12 +337,15 @@ class TestCLIIntegration:
         """Test CLI run command help."""
         import os
 
-        # Get the Nexus src directory
+        # Get the Nexus src directory and kailash core SDK src directory
         nexus_root = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         )
+        kailash_root = os.path.dirname(os.path.dirname(nexus_root))
         env = os.environ.copy()
-        env["PYTHONPATH"] = os.path.join(nexus_root, "src")
+        nexus_src = os.path.join(nexus_root, "src")
+        kailash_src = os.path.join(kailash_root, "src")
+        env["PYTHONPATH"] = f"{nexus_src}:{kailash_src}:{env.get('PYTHONPATH', '')}"
 
         result = subprocess.run(
             ["python", "-m", "nexus.cli", "run", "--help"],

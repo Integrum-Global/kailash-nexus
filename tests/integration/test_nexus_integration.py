@@ -5,11 +5,26 @@ as expected in a real-world scenario.
 """
 
 import os
+import socket
 import tempfile
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+
+
+def find_free_port(start_port: int = 8000) -> int:
+    """Find a free port starting from start_port."""
+    for port in range(start_port, start_port + 100):
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            try:
+                s.bind(("", port))
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"Could not find free port starting from {start_port}")
 
 
 class TestNexusIntegration:
@@ -42,8 +57,8 @@ class TestNexusIntegration:
             mock_gw.run = Mock()  # Changed from start to run
             mock_gateway.return_value = mock_gw
 
-            # Get nexus instance with unique port
-            n = Nexus(api_port=8010)
+            # Get nexus instance with dynamic port
+            n = Nexus(api_port=find_free_port(8010))
 
             # Should be initialized
             assert n is not None
@@ -67,7 +82,7 @@ class TestNexusIntegration:
 from kailash.workflow.builder import WorkflowBuilder
 
 workflow = WorkflowBuilder()
-workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
+workflow.add_node("HTTPRequestNode", "agent", {"url": "https://example.com"})
 """
             )
 
@@ -79,7 +94,7 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
                 with patch("nexus.core.create_gateway") as mock_gateway:
                     mock_gateway.return_value = Mock()
 
-                    n = Nexus(api_port=8011)
+                    n = Nexus(api_port=find_free_port(8011), auto_discovery=True)
                     n.start()
 
                     # Should have discovered the workflow
@@ -95,7 +110,7 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gateway.return_value = Mock()
 
-            n = Nexus(api_port=8012)
+            n = Nexus(api_port=find_free_port(8012))
 
             # Apply plugins
             n.enable_auth().enable_monitoring()
@@ -114,7 +129,7 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gateway.return_value = Mock()
 
-            n = Nexus(api_port=8013)
+            n = Nexus(api_port=find_free_port(8013))
 
             # Channels should be configured
             manager = get_channel_manager()
@@ -126,19 +141,20 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
 
     def test_workflow_registration_across_channels(self):
         """Test workflow registration works across all channels."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gw = Mock()
             mock_gw.register_workflow = Mock()
             mock_gateway.return_value = mock_gw
 
-            n = Nexus(api_port=8014)
+            n = Nexus(api_port=find_free_port(8014))
 
             # Create and register workflow
             builder = WorkflowBuilder()
-            builder.add_node("LLMAgentNode", "agent", {"model": "test"})
+            builder.add_node("HTTPRequestNode", "agent", {"url": "https://example.com"})
 
             n.register("test-workflow", builder)
             n.start()
@@ -153,7 +169,7 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gateway.return_value = Mock()
 
-            n = Nexus(api_port=8015)
+            n = Nexus(api_port=find_free_port(8015))
 
             # Check health before start
             health = n.health_check()
@@ -169,8 +185,9 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
 
     def test_complete_user_flow(self):
         """Test complete user flow from zero to running workflows."""
-        from kailash.workflow.builder import WorkflowBuilder
         from nexus import Nexus
+
+        from kailash.workflow.builder import WorkflowBuilder
 
         with patch("nexus.core.create_gateway") as mock_gateway:
             mock_gw = Mock()
@@ -178,19 +195,12 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
             mock_gw.register_workflow = Mock()
             mock_gateway.return_value = mock_gw
 
-            # Get fresh nexus instance
-            from nexus.core import _nexus_instance
-
-            _nexus_instance = None
-
             # 1. User imports and creates nexus
-            n = Nexus(api_port=8016)
+            n = Nexus(api_port=find_free_port(8016))
 
             # 2. User creates a workflow
             builder = WorkflowBuilder()
-            builder.add_node(
-                "LLMAgentNode", "agent", {"model": "gpt-4", "prompt": "Hello, world!"}
-            )
+            builder.add_node("HTTPRequestNode", "agent", {"url": "https://example.com"})
 
             # 3. User registers workflow
             n.register("hello-world", builder)

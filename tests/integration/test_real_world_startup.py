@@ -8,13 +8,28 @@ in the main thread instead of spawning daemon threads that die immediately.
 """
 
 import signal
+import socket
 import subprocess
 import sys
 import time
+from contextlib import closing
 from typing import Optional
 
 import pytest
 import requests
+
+
+def find_free_port(start_port: int = 8000) -> int:
+    """Find a free port starting from start_port."""
+    for port in range(start_port, start_port + 100):
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+            try:
+                s.bind(("", port))
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                return port
+            except OSError:
+                continue
+    raise RuntimeError(f"Could not find free port starting from {start_port}")
 
 
 @pytest.mark.integration
@@ -41,10 +56,15 @@ def test_real_world_server_startup():
     import os
 
     nexus_src_path = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+    kailash_src_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "..", "src"
+    )
+    api_port = find_free_port(9876)
 
     server_script = f"""
 import sys
 sys.path.insert(0, '{nexus_src_path}')
+sys.path.insert(0, '{kailash_src_path}')
 
 import time
 from nexus import Nexus
@@ -55,7 +75,7 @@ workflow = WorkflowBuilder()
 workflow.add_node("PythonCodeNode", "test", {{"code": "result = {{'status': 'ok'}}"}})
 
 # Create and start server (production pattern)
-app = Nexus(api_port=9876, enable_durability=False, auto_discovery=False)
+app = Nexus(api_port={api_port}, enable_durability=False, auto_discovery=False)
 app.register("test_workflow", workflow.build())
 
 # This should BLOCK until Ctrl+C in v1.0.8 (fixed)
@@ -90,7 +110,9 @@ app.start()
                 )
 
             try:
-                response = requests.get("http://localhost:9876/health", timeout=1)
+                response = requests.get(
+                    f"http://localhost:{api_port}/health", timeout=1
+                )
                 if response.status_code == 200:
                     started = True
                     break
@@ -108,7 +130,7 @@ app.start()
         )
 
         # Verify server accepts requests
-        response = requests.get("http://localhost:9876/workflows", timeout=2)
+        response = requests.get(f"http://localhost:{api_port}/workflows", timeout=2)
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 
         workflows = response.json()
@@ -117,7 +139,7 @@ app.start()
         # Verify workflow execution works (with longer timeout for durability operations)
         try:
             response = requests.post(
-                "http://localhost:9876/workflows/test_workflow/execute",
+                f"http://localhost:{api_port}/workflows/test_workflow/execute",
                 json={"inputs": {}},
                 timeout=10,
             )
@@ -163,15 +185,20 @@ def test_real_world_startup_logs():
     import os
 
     nexus_src_path = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+    kailash_src_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "..", "src"
+    )
+    api_port = find_free_port(9877)
 
     server_script = f"""
 import sys
 sys.path.insert(0, '{nexus_src_path}')
+sys.path.insert(0, '{kailash_src_path}')
 
 from nexus import Nexus
 from kailash.workflow.builder import WorkflowBuilder
 
-app = Nexus(api_port=9877, enable_durability=False, auto_discovery=False)
+app = Nexus(api_port={api_port}, enable_durability=False, auto_discovery=False)
 
 workflow = WorkflowBuilder()
 workflow.add_node("PythonCodeNode", "test", {{"code": "result = {{'ok': True}}"}})
@@ -203,7 +230,7 @@ app.start()
 
         # Just verify server is responsive
         try:
-            response = requests.get("http://localhost:9877/health", timeout=2)
+            response = requests.get(f"http://localhost:{api_port}/health", timeout=2)
             assert response.status_code == 200
         except requests.exceptions.ConnectionError:
             pytest.fail(
@@ -230,15 +257,20 @@ def test_port_binding_verification():
     import os
 
     nexus_src_path = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+    kailash_src_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "..", "src"
+    )
+    api_port = find_free_port(9878)
 
     server_script = f"""
 import sys
 sys.path.insert(0, '{nexus_src_path}')
+sys.path.insert(0, '{kailash_src_path}')
 
 from nexus import Nexus
 from kailash.workflow.builder import WorkflowBuilder
 
-app = Nexus(api_port=9878, enable_durability=False, auto_discovery=False)
+app = Nexus(api_port={api_port}, enable_durability=False, auto_discovery=False)
 
 workflow = WorkflowBuilder()
 workflow.add_node("PythonCodeNode", "ping", {{"code": "result = {{'pong': True}}"}})
@@ -256,8 +288,6 @@ app.start()  # Must block here in v1.0.8
 
     try:
         # Wait for port binding
-        import socket
-
         port_bound = False
 
         for i in range(10):
@@ -271,7 +301,7 @@ app.start()  # Must block here in v1.0.8
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.settimeout(1)
-                    result = s.connect_ex(("localhost", 9878))
+                    result = s.connect_ex(("localhost", api_port))
                     if result == 0:
                         port_bound = True
                         break
@@ -279,12 +309,12 @@ app.start()  # Must block here in v1.0.8
                 continue
 
         assert port_bound, (
-            "Port 9878 never became bound. This indicates v1.0.7 bug where "
+            f"Port {api_port} never became bound. This indicates v1.0.7 bug where "
             "daemon thread dies before uvicorn can bind port."
         )
 
         # Verify server actually responds (not just port open)
-        response = requests.get("http://localhost:9878/health", timeout=2)
+        response = requests.get(f"http://localhost:{api_port}/health", timeout=2)
         assert response.status_code == 200
 
     finally:
@@ -306,15 +336,20 @@ def test_multiple_requests_sustained():
     import os
 
     nexus_src_path = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+    kailash_src_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "..", "src"
+    )
+    api_port = find_free_port(9879)
 
     server_script = f"""
 import sys
 sys.path.insert(0, '{nexus_src_path}')
+sys.path.insert(0, '{kailash_src_path}')
 
 from nexus import Nexus
 from kailash.workflow.builder import WorkflowBuilder
 
-app = Nexus(api_port=9879, enable_durability=False, auto_discovery=False)
+app = Nexus(api_port={api_port}, enable_durability=False, auto_discovery=False)
 
 workflow = WorkflowBuilder()
 # Fix: inputs needs to be accessed from node's namespace
@@ -339,7 +374,9 @@ app.start()
             if process.poll() is not None:
                 pytest.fail("Process exited during startup")
             try:
-                response = requests.get("http://localhost:9879/health", timeout=1)
+                response = requests.get(
+                    f"http://localhost:{api_port}/health", timeout=1
+                )
                 if response.status_code == 200:
                     started = True
                     break
@@ -358,7 +395,7 @@ app.start()
             # Execute workflow (with longer timeout)
             try:
                 response = requests.post(
-                    "http://localhost:9879/workflows/echo/execute",
+                    f"http://localhost:{api_port}/workflows/echo/execute",
                     json={"inputs": {"msg": f"request_{i}"}},
                     timeout=10,
                 )
