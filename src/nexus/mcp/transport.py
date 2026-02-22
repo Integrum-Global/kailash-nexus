@@ -80,6 +80,7 @@ class WebSocketServerTransport(MCPTransport):
         self._clients: Set[WebSocketServerProtocol] = set()
         self._running = False
         self._server_task = None
+        self._message_queue: asyncio.Queue = asyncio.Queue()
 
     async def start(self):
         """Start the WebSocket server."""
@@ -157,11 +158,16 @@ class WebSocketServerTransport(MCPTransport):
                 self._clients.discard(client)
 
     async def receive_message(self) -> Dict[str, Any]:
-        """Not implemented for server transport.
+        """Receive the next message from any connected client.
 
-        Server transport receives messages through the message handler callback.
+        Messages are enqueued by ``_handle_client`` as they arrive over
+        WebSocket connections.  This method blocks until a message is
+        available.
+
+        Returns:
+            Parsed JSON message dict.
         """
-        raise NotImplementedError("Server transport uses message handler callback")
+        return await self._message_queue.get()
 
     async def _handle_client(self, websocket: WebSocketServerProtocol, path: str):
         """Handle a client connection.
@@ -196,6 +202,9 @@ class WebSocketServerTransport(MCPTransport):
                     # Add client reference to the message
                     data["_client"] = websocket
 
+                    # Enqueue for receive_message() consumers
+                    await self._message_queue.put(data)
+
                     # Handle the message if we have a handler
                     if self.message_handler:
                         response = await self.message_handler(data)
@@ -207,12 +216,16 @@ class WebSocketServerTransport(MCPTransport):
                 except json.JSONDecodeError as e:
                     logger.error(f"Invalid JSON from client: {e}")
                     await self.send_message(
-                        {"type": "error", "error": f"Invalid JSON: {e}"}, websocket
+                        {"type": "error", "error": "Invalid JSON message"}, websocket
                     )
                 except Exception as e:
                     logger.error(f"Error handling message: {e}")
                     await self.send_message(
-                        {"type": "error", "error": str(e)}, websocket
+                        {
+                            "type": "error",
+                            "error": f"Internal error: {type(e).__name__}",
+                        },
+                        websocket,
                     )
 
         except websockets.exceptions.ConnectionClosed:

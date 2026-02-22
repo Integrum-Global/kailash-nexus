@@ -38,7 +38,7 @@ class TestWorkflowDiscovery:
 from kailash.workflow.builder import WorkflowBuilder
 
 workflow = WorkflowBuilder()
-workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
+workflow.add_node("PythonCodeNode", "agent", {"code": "result = 'hello'"})
 """
                 )
 
@@ -62,7 +62,7 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
 from kailash.workflow.builder import WorkflowBuilder
 
 workflow = WorkflowBuilder()
-workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
+workflow.add_node("PythonCodeNode", "agent", {"code": "result = 'hello'"})
 """
             )
 
@@ -177,7 +177,7 @@ workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
 from kailash.workflow.builder import WorkflowBuilder
 
 workflow = WorkflowBuilder()
-workflow.add_node("LLMAgentNode", "agent", {"model": "test"})
+workflow.add_node("PythonCodeNode", "agent", {"code": "result = 'hello'"})
 """
             )
 
@@ -214,7 +214,7 @@ from kailash.workflow.builder import WorkflowBuilder
 
 def create_workflow():
     builder = WorkflowBuilder()
-    builder.add_node("LLMAgentNode", "agent", {"model": "test"})
+    builder.add_node("PythonCodeNode", "agent", {"code": "result = 'hello'"})
     return builder
 
 # Export the factory
