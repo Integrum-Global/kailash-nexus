@@ -189,12 +189,15 @@ class TestWebSocketServerTransport:
 
         assert result is False
 
-    async def test_receive_message_not_implemented(self):
-        """Test that receive_message raises NotImplementedError."""
+    async def test_receive_message_returns_queued_message(self):
+        """Test that receive_message returns messages from the internal queue."""
         transport = WebSocketServerTransport()
 
-        with pytest.raises(NotImplementedError):
-            await transport.receive_message()
+        # Put a message in the queue and verify it's returned
+        test_msg = {"jsonrpc": "2.0", "method": "test", "id": 1}
+        await transport._message_queue.put(test_msg)
+        result = await transport.receive_message()
+        assert result == test_msg
 
 
 @pytest.mark.asyncio

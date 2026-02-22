@@ -1,5 +1,19 @@
 # Nexus Changelog
 
+## [1.4.1] - 2026-02-22
+
+### V4 Audit Hardening Patch
+
+Post-release reliability hardening from V4 final audit.
+
+### Fixed
+
+- **Stale Transport Test**: Updated `test_receive_message_not_implemented` to test actual queue-based message receiving behavior instead of expecting `NotImplementedError` from implemented method
+
+### Test Results
+
+- Nexus: 1,027 passed
+
 ## [1.4.0] - 2026-02-21
 
 ### Quality Milestone Release - V4 Audit Cleared

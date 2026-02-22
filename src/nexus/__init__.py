@@ -28,7 +28,7 @@ Usage:
 from .core import MiddlewareInfo, Nexus, NexusPluginProtocol, RouterInfo, create_nexus
 from .presets import PRESETS, NexusConfig, PresetConfig, apply_preset, get_preset
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 __all__ = [
     # Core
     "Nexus",
